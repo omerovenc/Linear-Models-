@@ -1,0 +1,298 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+In this post, I will use different linear model for purpose of prediction of mpg within given data sets.
+- Ordinary linear Models
+- Feature Elimination with AIC and Backwar elimination
+- Diagnostic on assumptions by checking residual and outliers
+- To define transformation of predictor by using partial res with specific input
+- Usage of shrinkage methods like PCA, PCR, PSL, RIDGE, LASSO 
+
+```{r}
+filename <- "auto-mpg.csv"
+mydata <- read.csv(filename, header=TRUE, sep=",")
+str(mydata)
+```
+
+"The data concerns city-cycle fuel consumption in miles per gallon, to be predicted in terms of 3 multivalued discrete and 5 continuous attributes." (Quinlan, 1993)
+
+
+Attribute Information:
+
+1. mpg: continuous 
+2. cylinders: multi-valued discrete 
+3. displacement: continuous 
+4. horsepower: continuous 
+5. weight: continuous 
+6. acceleration: continuous 
+7. model year: multi-valued discrete 
+8. origin: multi-valued discrete 
+9. car name: string (unique for each instance)
+
+- After I fetch the auto mpg data from local folder, I looked structure of data. It is easy to see and understand of data by str() cmd in R. In first glance, it has some missing values in horsepower and some features needs to be converted from factor level to int or double like horsepower, also i will exclude car.name feature in my model!!!
+```{r}
+temp=as.character(mydata$horsepower)
+mydata$horsepower=as.numeric(temp) # after conversion, all missing turns out to be `NA`!!
+mydata=mydata[-9] # I EXCLUDED THE CAR NAME VARIABLE IN DATA SET
+#mydata1=as.data.frame(scale(mydata, scale = T)) # ALSO NORMALIZED THE DATA
+str(mydata)
+```
+- In order to eliminate data contamination, I will handle missing values after separation of data!!! This is tricky issue ...
+
+- Before starting my analysis on that, I have to split the data into two parts as Test and Training data. I am going to take %30 of data as training , leftover  will be test sets. IT IS BETTER TO DIVIDE DATA BY RANDOMIZATION TO AVOID ANY KIND OF BIASNESS DURING THE DATA COLLECTION!!!!
+
+```{r}
+set.seed(101)
+
+sample <- sample.int(n = nrow(mydata), size = floor(.70*nrow(mydata)), replace = F)
+train <- mydata[sample, ]
+test  <- mydata[-sample, ]
+
+```
+After separation, I will replace missing ones with mean of horsepower in the training as i did below....
+```{r}
+missing.index=which(is.na(train$horsepower))
+train$horsepower[missing.index]=mean(train$horsepower[-(missing.index)])
+```
+
+Let`s make some diagnostic on training data before modelling...
+```{r}
+summary(train)
+```
+
+firstly, I might tell that displacement and horsepower have some skewness by comparing their own median with mean.This features might have bad effect on our least square modelling, is based on the predictors should have normally distributed. However, it can be too early to tell this. Now lets make some graphical summaries:
+```{r}
+require(ggplot2)
+ggplot(train,aes(mpg,displacement))+geom_point()+stat_smooth(method = "lm")
+```
+
+```{r}
+ggplot(train,aes(mpg,horsepower))+geom_point()+stat_smooth(method = "lm")
+```
+
+As seen above graphs, both features might needs to get transformation because of skewness in these variable.Probably, 1/sqrt() transformation might be used !!!
+
+```{r}
+ggplot(train,aes(mpg,weight))+geom_point()+stat_smooth(method = "lm")
+
+```
+
+```{r}
+ggplot(train,aes(mpg,model.year))+geom_point()+stat_smooth(method = "lm")
+
+```
+
+```{r}
+ggplot(train,aes(mpg,acceleration))+geom_point()+stat_smooth(method = "lm")
+
+```
+
+```{r}
+ggplot(train,aes(mpg,origin))+geom_point()+stat_smooth(method = "lm")
+```
+
+```{r}
+
+ggplot(train,aes(mpg,cylinders))+geom_point()+stat_smooth(method = "lm")
+```
+
+
+Strong relationships between response variable can be seen in the plots.I can see also some outlier points!!Lets look at correlation matrix of all features in model:
+
+```{r}
+require(corrplot)
+corr=cor(train)
+corrplot(corr, type = "full", order = "original", 
+         tl.col = "black", tl.srt = 45)
+```
+
+In the table above correlations coefficients between the possible pairs of variables are shown.There are highly correlated features in data. What it means for me that It has multicollinearity which violates one of Gaussian assumptions in ordinary linear regression. In order to avoid this issue, we can have other options such as principle component regression, ridge, lasso or elastic net regression model!
+
+# 1. FULL MODEL WITH LEAST SQUARE ESTIMATION
+I start with full model:
+```{r}
+lmod=lm(mpg~.,train)
+summary(lmod)
+```
+*** If you displacement in model, it has positivve relation with response however it is negative,....MULTILINEARITY.........
+
+horsepower, acceleration and cylinders are seen not statistical significant. However, horsepower and cylinder have strong negative correlation with response as seen above correlation diagram. This can be result from col-linearity among predictors! 
+
+After fitting a regression model it is important to determine whether all the necessary
+model assumptions are valid before performing inference. If there are any violations,
+subsequent inferential procedures may be invalid resulting in faulty conclusions.
+Therefore, it is crucial to perform appropriate model diagnostics.
+In constructing our regression models we assumed that the response y to the
+explanatory variables were linear in the parameters and that the errors were
+independent and identically distributed (i.i.d) normal random variables with mean 0 and
+constant variance
+.
+Model diagnostic procedures involve both graphical methods and formal statistical tests.
+These procedures allow us to explore whether the assumptions of the regression model
+are valid and decide whether we can trust subsequent inference results
+Lets make other diagnostic on the model:
+```{r}
+lev = hat(model.matrix(lmod))
+plot(lev)
+```
+
+Note there is one point that has a higher leverage than all the other points (~0.15). To
+identify this point type:
+```{r}
+train[lev>0.10,]
+```
+
+This point has highest leverage among all training set.In addition to this, i need to find influential or outlier points in model by using cook distance.
+```{r}
+cook = cooks.distance(lmod)
+plot(cook,ylab="Cooks distances")
+points(29,cook[29],col='red')
+
+```
+
+I can tell that the highest leverage point(29th row) is not influential points therefore it has no big impact on model. The highest influential point`s cook distance is around 0.05 that is very less. Therefore it can be unnecessary to remove any points in model  
+lets look at residuals in model:
+```{r}
+plot(lmod)
+```
+```{r}
+termplot(lmod,partial.resid = T,se=T,col.res = "blue")
+```
+After looking residual plots, there is no certain way to violate one of assumptions of residual for least square estimation.Then i could not see any good transformation for all predictors.Maybe 1/sqrt might be applied to weight??? Therefore ad hoc statistical tests like t test can be regarded to eliminate features!I  will also test my full model with test data by looking prediction error:
+
+```{r}
+
+missing.index=which(is.na(test$horsepower))
+test$horsepower[missing.index]=mean(test$horsepower[-(missing.index)])
+sqrt(mean((predict(lmod,test)-test$mpg)^2))
+```
+Even though my model is bias due to collinearity, I may tell that it produced  low prediction error.
+
+# 2. REDUCED MODEL WITH FEATURE ELIMINATION
+
+After full model, I can discard three features that are not statistical significant , are cylinders, horsepower and acceleration.Then I make new model with transformed of weight and others:
+
+```{r}
+lmod1=lm(mpg~ I(1/sqrt(weight))+model.year+origin+displacement, data = train)
+summary(lmod1)
+```
+According to summary model, displacement seems not statistical significant withe level of 0.05. In another forward elimination, I can discard this features for  new model.Our transformed weight fits very well to model, this also increase the R square
+
+```{r}
+sqrt(mean((predict(lmod1,test)-test$mpg)^2))
+```
+
+R square is still high which is 0.85 and square root of prediction error is satisfactory as well.
+
+##3. REDUCED MODEL WITH ONE MORE ELIMINATION
+
+```{r}
+lmod2=lm(mpg~ I(1/sqrt(weight))+model.year+origin, data = train)
+summary(lmod2)
+```
+R square is still high! All predictor are statistical significant!
+Let`s see prediction error:
+
+```{r}
+sqrt(mean((predict(lmod2,test)-test$mpg)^2))
+```
+This is also well level for reduced model.
+In backward elimination, i have discard four variable. Three of them are very higly correlated with each other. 
+
+##4. CRITERION BASED FEATURE SELECTION
+
+I did test based elimination above. Instead of that kind of feature selection in ordinary linear regression, I can also use AIC or BIC. I used AIC : 
+
+```{r}
+require(leaps)
+rs=summary(regsubsets(mpg~.,train))
+rs$which
+n=length(train$mpg)
+AIC= n*log(rs$rss/n)+(2:8)*2
+plot(AIC~I(1:7),xlab="Number of Predictor")
+
+```
+
+in AIC process, it takes me to same way like I did in bakcward elimination. Three or four variable might be redundant features just by one step!!
+
+##5. SHRINKAGE METHODS/PRINCIPAL COMPONENTS ANALYSIS
+
+PCA is a popular analysis to get lower dimensional predictor sets from higher level one.It enables us to have mutually orthogonal linear structure, which can be used to overcome collinearity problem among features.I think it is appropiate choice for our data sets , having dependent variables.lets try it on my sets:
+
+```{r}
+
+prtrain=prcomp(train)
+prtrain$rotation
+summary(prtrain)
+#lmodpcr=lm(train$mpg~prtrain$x[,1:2])
+```
+In looking loadings or weights of features, we can see which variables include the variability of overall size. It means for us that we can use these kind of variable in our linear regression. In this case, weight is striking predictior in terms of variability. This variable should use in model. Then in summary of pca, first components have most of variability.Lets make regression by this.
+```{r}
+lmodpcr=lm(train$mpg~prtrain$x[,1:3])
+summary(lmodpcr)
+```
+
+We can see how to get lower , orthogonal structure BY USING PCA.Also ,R square is good enough for just one predictor. it is easily seen power of pca.However it enables us  to interpret or inference results very hard because pc is kind of meaningless linear transformation of all features.But it can be used for prediction  by pc regression.
+```{r}
+
+require(pls)
+pcrr=pcr(mpg ~ .,data=train, ncomp=7)
+pcrrmse=RMSEP(pcrr, newdata=test)
+plot(pcrrmse)
+which.min(pcrrmse$val)
+y=predict(pcrr,test, ncomp = 6)
+sqrt(mean((y-test$mpg)^2))
+
+
+```
+ As seen above, the crossvalidated number of components is 7, by using seven pricciple components we can get prediction error like we have in ols.However, it is no reduction of dimension in model. Since, number of features is very less to use pca. It is good use in large number of predictors!!!In this porblem it is not good idea to use pca even though it has collinearity.
+ 
+## PARTIAL LEAST SQUARES
+
+ PLS is method for relating input variables and response. PLS regression does not ignore response variables in determining model, although PCR takes only account relations among input variables. Therefore this is more powerful in prediction modelling.
+```{r}
+plsmod= plsr(mpg ~ . , data= train, ncomp=7, validation= "CV")
+PLSCV= RMSEP(plsmod, estimate="CV")
+plot(PLSCV, main = "")
+y=predict(pcrr,test, ncomp = 7)
+sqrt(mean((y-test$mpg)^2))
+
+```
+ 
+ It is gives almost same results in PCA.
+ 
+
+## RIDGE REGRESSION
+
+```{r}
+require(MASS)
+
+ridmod=lm.ridge(mpg ~ ., train, scale = T, lambda = seq(0, 100, by=0.05))
+matplot(ridmod$lambda, coef(ridmod), type="l", xlab = expression(lambda), ylab = expression(hat(beta)))
+which.min(ridmod$GCV)
+coef(ridmod)[18,]
+```
+
+in ridge , after graph i can tell that model has collineraity or not you can understand change on the features that show how they affect by collinearity!!
+
+The optimal lambda is 2.5, lets make some predictions:
+```{r}
+t=cbind(1,as.matrix(test))
+coeff=coef(ridmod)[18,]
+tdata=t[,-2]
+
+ypred=coeff[1] * tdata[,1] + coeff[2] * tdata[,2]+  coeff[3] * tdata[,3]+ coeff[4] * tdata[,4] +
+      coeff[5] * tdata[,5] + coeff[6] * tdata[,6]+  coeff[7] * tdata[,7]+ coeff[8] * tdata[,8]
+
+a=sd(ypred)
+b=mean(ypred)
+res=a*ypred+b
+res
+#uu=ypred* sd(as.matrix(yred))+mean(yred)
+sqrt(mean((ypred-t[,2])^2))
+#ypred=coeff %*% tdata
+```
+
